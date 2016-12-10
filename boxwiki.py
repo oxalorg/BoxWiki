@@ -57,23 +57,40 @@ def edit(req_path):
 
 @route('/test')
 def test():
-    t = wiki.gen_index()
+    wiki.gen_index()
+    t = wiki.info
+    from pprint import pprint
+    pprint(t)
     return json.dumps(t)
+
+@route('/wiki')
+@view('wiki')
+def wiki_index():
+    test()
+    categories = wiki.info.keys()
+    print(wiki.info.keys())
+    return dict(categories=categories, title='Wiki')
 
 @route('/wiki/<category>')
 @view('category')
 def category(category):
-    dir_path = wiki.get_abs_path(category)
-    pages = os.listdir(dir_path)
-    return pages
+    pages = []
+    for k, v in wiki.info[category].items():
+        print(k, v)
+        pages.append(v['meta'])
+
+    if not pages:
+        return "Uhoh! No such category exists!"
+    return dict(pages=pages, category=category, title=category)
 
 
-@route('/wiki/<category>/<page>')
-@route('/wiki/<category>/<page>/')
+@route('/wiki/<category>/<page:path>')
+@route('/wiki/<category>/<page:path>/')
 @view('page')
-def wiki(category, page):
+def wiki(category, page, sub=''):
     req_path = "{}/{}".format(category, page)
     fpath = wiki.get_abs_path(req_path)
+    print(fpath)
     if os.path.isdir(fpath):
         fpath = absjoin(fpath, 'index.md')
     elif os.path.isfile(fpath + '.md'):
@@ -107,6 +124,8 @@ class Wiki():
         self.site['ord_pages'] = []
         self.site['categories'] = collections.defaultdict(list)
         self.site['tags'] = collections.defaultdict(list)
+        multilevel_dd = lambda: collections.defaultdict(multilevel_dd)
+        self.info = multilevel_dd()
 
     def get_abs_path(self, *rfpath):
         return os.path.join(self.WIKI_DIR, *rfpath)
@@ -139,15 +158,21 @@ class Wiki():
 
     def gen_index(self):
         for root, dirs, files in os.walk(self.WIKI_DIR):
+            parent_dir = os.path.basename(root)
             for fname in files:
                 fpath = absjoin(root, fname)
                 if fname.endswith('.md'):
                     logging.info("Indexing file: {}".format(fname))
                     meta, _ = self.extract(fpath, only_meta=True)
                     page_id = self.get_rel_path(fpath)
-                    meta.update({'slug': os.path.splitext(fname)[0]})
+                    if fname == 'index.md':
+                        meta.update({'slug': parent_dir})
+                        self.info[meta['category']][parent_dir]['meta'] = meta
+                    else:
+                        meta.update({'slug': os.path.splitext(fname)[0]})
+                        self.info[meta['category']][parent_dir][meta['slug']]['meta'] = meta
                     self.site['pages'].update({ page_id: meta })
-                    for category in meta.get('categories', []):
+                    for category in meta.get('category', []):
                         self.site['categories'][category].append(page_id)
                     for tag in meta.get('tags', []):
                         self.site['tags'][tag].append(page_id)
@@ -215,6 +240,7 @@ def strip_path():
 
 if __name__ == '__main__':
     wiki = Wiki()
+    wiki.gen_index()
     logging.basicConfig(filename=absjoin(wiki.ROOT_DIR, '_boxwiki.log'), filemode='w', level=logging.DEBUG)
     logging.info("Starting BoxWiki..")
     run(reloader=True, host='0.0.0.0', port=3130, debug=True)
