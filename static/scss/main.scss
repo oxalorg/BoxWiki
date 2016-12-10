@@ -1,0 +1,26 @@
+@import 'normalize.css';
+@import 'vader.scss';
+
+#top {
+    position:absolute;
+    left:0; right:0;
+    height: 42px;
+}
+
+#side {
+    position:absolute;
+    left:0; top:42px; bottom: 0;
+    width: 178px;
+}
+
+#main {
+    position: absolute;
+    left:178px; top:42px; right:0; bottom:0;
+    max-width: 720px;
+}
+
+body {
+    padding-top: 20px;
+}
+
+
