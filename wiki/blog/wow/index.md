@@ -1,6 +1,6 @@
 ---
 title: hey
-category: test
+category: blog
 tags: [1,2]
 ---
 
