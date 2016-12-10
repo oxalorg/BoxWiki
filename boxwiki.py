@@ -1,10 +1,12 @@
 import os
+import re
 import json
 import logging
 import collections
 import CommonMark
 from pyyaml import yaml
-from bottle import route, run, hook, request, template, view
+from bottle import route, run, hook, request, template, view, redirect, \
+        static_file
 
 
 __commonmark_version__ = '0.7.2'
@@ -15,25 +17,81 @@ __version__ = '0.0.1'
 absjoin = lambda x, y: os.path.join(x, y)
 
 
+# Routes
+
 @route('/')
 def index():
     return "Welcome to BoxWiki"
 
 
-@route('/wiki/<page_path:path>')
+@route('/add')
+@view('add')
+def add():
+    return dict(title='Add a new page')
+
+
+@route('/add', method='POST')
+def do_add():
+    title = request.forms.get('title')
+    category = request.forms.get('category')
+    tags = request.forms.getall('tags')
+    attachments = request.files.getall('attachments[]')
+    content = request.forms.get('content')
+    # add a way to add more custom metadata.
+    rfpath = wiki.add_page(title=title, category=category, tags=tags, attachments=attachments, content=content)
+    return redirect(rfpath)
+
+
+@route('/static/<filename:path>')
+def static(filename):
+    print("wow")
+    return static_file(filename, root=absjoin(wiki.ROOT_DIR, 'static'))
+
+
+@route('/wiki/<req_path:path>/edit')
+@view('add')
+def edit(req_path):
+    meta, content = wiki.extract(wiki.get_abs_path(req_path))
+    return dict(content=content, **meta)
+
+
+@route('/test')
+def test():
+    t = wiki.gen_index()
+    return json.dumps(t)
+
+@route('/wiki/<category>')
+@view('category')
+def category(category):
+    dir_path = wiki.get_abs_path(category)
+    pages = os.listdir(dir_path)
+    return pages
+
+
+@route('/wiki/<category>/<page>')
+@route('/wiki/<category>/<page>/')
 @view('page')
-def wiki(page_path):
-    page_path += '.md'
-    page = wiki.get_abs_path(page_path)
-    meta, content = wiki.extract(page)
+def wiki(category, page):
+    req_path = "{}/{}".format(category, page)
+    fpath = wiki.get_abs_path(req_path)
+    if os.path.isdir(fpath):
+        fpath = absjoin(fpath, 'index.md')
+    elif os.path.isfile(fpath + '.md'):
+        fpath += '.md'
+    elif os.path.exists(fpath):
+        return static_file(req_path, root=wiki.WIKI_DIR)
+    else:
+        return "This page does not exist. Go add it now!"
+    meta, content = wiki.extract(fpath)
+    attachments = os.listdir(os.path.dirname(fpath))
     html = CommonMark.commonmark(content)
-    return dict(content=html, **meta)
+    return dict(content=html, attachments=attachments, **meta)
 
 
 class Wiki():
-    def __init__(self, ROOT_DIR=os.path.dirname(__file__)):
-        self.ROOT_DIR = os.path.abspath(ROOT_DIR)
-        self.WIKI_DIR = os.path.join(ROOT_DIR, 'wiki')
+    def __init__(self, ROOT_DIR=None):
+        self.ROOT_DIR = ROOT_DIR or os.path.abspath(os.path.dirname(__file__))
+        self.WIKI_DIR = os.path.join(self.ROOT_DIR, 'wiki')
         self.set_defaults()
         self.init_site()
         self.watchman = Watchman(self.ROOT_DIR)
@@ -50,8 +108,34 @@ class Wiki():
         self.site['categories'] = collections.defaultdict(list)
         self.site['tags'] = collections.defaultdict(list)
 
-    def get_abs_path(self, rfpath):
-        return os.path.join(self.WIKI_DIR, rfpath)
+    def get_abs_path(self, *rfpath):
+        return os.path.join(self.WIKI_DIR, *rfpath)
+
+    def get_rel_path(self, fpath):
+        return os.path.relpath(fpath, self.ROOT_DIR)
+
+    def slugify(self, title):
+        slug = [x for x in re.split('[\. ]*', title) if x]
+        return '_'.join(slug)
+
+    def add_page(self, title, category, content, tags=[], attachments=[]):
+        out = "---\ntitle: {}\ncategory: {}\ntags: {}\n---\n".format(
+                title, category, tags)
+        out += content
+        slug = self.slugify(title)
+        fpath = bpath = self.get_abs_path(category, slug)
+        fpath = os.path.join(fpath, 'index.md')
+        os.makedirs(os.path.dirname(fpath), exist_ok=True)
+        for upload in attachments:
+            print(upload, upload.filename)
+            if os.path.exists(absjoin(bpath, upload.filename)):
+                logging.error('File exists. Can not overwrite.')
+                continue
+            upload.save(bpath)
+
+        with open(fpath, 'w') as fp:
+            fp.write(out)
+        return self.get_rel_path(bpath)
 
     def gen_index(self):
         for root, dirs, files in os.walk(self.WIKI_DIR):
@@ -59,8 +143,8 @@ class Wiki():
                 fpath = absjoin(root, fname)
                 if fname.endswith('.md'):
                     logging.info("Indexing file: {}".format(fname))
-                    meta, text = self.extract(fpath, only_meta=True)
-                    page_id = os.path.relpath(fpath, self.WIKI_DIR)
+                    meta, _ = self.extract(fpath, only_meta=True)
+                    page_id = self.get_rel_path(fpath)
                     meta.update({'slug': os.path.splitext(fname)[0]})
                     self.site['pages'].update({ page_id: meta })
                     for category in meta.get('categories', []):
@@ -72,6 +156,8 @@ class Wiki():
 
     def extract(self, fpath, only_meta=False):
         meta, content, first_line, meta_parsed = [], [], True, False
+        if os.path.isdir(fpath):
+            fpath = absjoin(fpath, 'index.md')
         with open(fpath) as fp:
             try:
                 for line in fp:
@@ -129,6 +215,6 @@ def strip_path():
 
 if __name__ == '__main__':
     wiki = Wiki()
-    run(reloader=True, host='0.0.0.0', port=3130, debug=True)
-    logging.basicConfig(filename=absjoin(opts.ROOT_DIR, '_boxwiki.log'), filemode='w', level=logging.DEBUG)
+    logging.basicConfig(filename=absjoin(wiki.ROOT_DIR, '_boxwiki.log'), filemode='w', level=logging.DEBUG)
     logging.info("Starting BoxWiki..")
+    run(reloader=True, host='0.0.0.0', port=3130, debug=True)
