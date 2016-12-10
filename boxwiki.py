@@ -2,6 +2,8 @@ import os
 import re
 import json
 import logging
+logging.basicConfig(filename='/tmp/boxwiki.log', filemode='w', level=logging.DEBUG)
+logging.info("Starting BoxWiki..")
 import collections
 import CommonMark
 from pyyaml import yaml
@@ -241,6 +243,4 @@ def strip_path():
 if __name__ == '__main__':
     wiki = Wiki()
     wiki.gen_index()
-    logging.basicConfig(filename=absjoin(wiki.ROOT_DIR, '_boxwiki.log'), filemode='w', level=logging.DEBUG)
-    logging.info("Starting BoxWiki..")
     run(reloader=True, host='0.0.0.0', port=3130, debug=True)
